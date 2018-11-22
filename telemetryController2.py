@@ -32,6 +32,9 @@ NONE = 'NONE'
 SUM = 'SUM'
 COUNT = 'COUNT'
 
+#keyList Mode
+ALL = "ALL"
+
 # Main Function
 def main(args):
     try:
@@ -45,8 +48,9 @@ def main(args):
         Limit = args.limit
         Agg = args.agg
         Format = args.format
-        keyList = ast.literal_eval(str(args.keyList))
+        keyList = args.keyList.split(',')
     except:
+        raise
         pass
     
     if(mode == "getToken"):
@@ -90,7 +94,7 @@ def getKeyList(entity_type, entity_id, isTelemetry=True):
     return KeyList
 
 # Function to Get Latest Variable Value in Device
-def getLatestValue(entity_type, entity_id, isTelemetry=True):
+def getLatestValue(entity_type, entity_id, isTelemetry=True,keyList=ALL):
     # Args:
     # - entity_type   : DEVICE, ASSET, OR ETC
     # - entity_id     : ID of the entity
@@ -99,11 +103,27 @@ def getLatestValue(entity_type, entity_id, isTelemetry=True):
 
     JWT_Token = getToken()
     if isTelemetry:
-        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/timeseries' %(entity_type,entity_id)
+        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/timeseries?keys=' %(entity_type,entity_id)
     else:
-        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/attributes' %(entity_type,entity_id)
+        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/attributes?keys=' %(entity_type,entity_id)
+
+    if keyList==ALL :
+        keys=getKeyList(entity_type, entity_id, isTelemetry)
+    else:
+        keys=keyList
+        
+    for i,key in enumerate(keys):
+        if i != len(keys)-1:
+            url += key + ','
+        else:
+            url += key + '&'
+
     headers = {'Accept':'application/json', 'X-Authorization': "Bearer "+JWT_Token}
     LatestValue = requests.get(url, headers=headers, json=None).json()
+
+    #Remove timestamp and extract values
+    for key in keys:
+        LatestValue[key]=ast.literal_eval(LatestValue[key][0]['value'])
     
     return LatestValue
 
@@ -226,7 +246,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
             t.setDaemon(True)
             t.start()
             threads[i]=t
-        print(keys)
+        #print(keys)
         
         # Join all the threads
         for i in range(0,totalThread):
@@ -283,7 +303,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
             # grab the active worksheet
             ws = wb.active
 
-            column = ['Timestamp']+ list(Log_JSON.keys())
+            column = ['Timestamp']+ keyList
             ws.append(column)
             
             for i, item in enumerate(rec):
@@ -298,7 +318,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         #print(e)
         raise
         return -1
-'''
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Telemetry controller API", default=None)
@@ -316,9 +336,9 @@ if __name__ == '__main__':
     args = parser.parse_args(sys.argv[1:]);
     
     main(args);
-'''
-#pp.pprint(getKeyList('DEVICE', '25db7820-e302-11e8-8cdd-71469a7af993'))
-#pp.pprint(getLatestValue('DEVICE', '25db7820-e302-11e8-8cdd-71469a7af993'))
+
+#pp.pprint(getKeyList('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c'))
+#pp.pprint(getLatestValue('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',1,['I_1','I_2','I_3','V_1','V_2','V_3']))
 #print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
-print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','V_12','V_23','V_31','PF_avg','Freq','E_Active','E_Reactive'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
+#print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
 #exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV)
