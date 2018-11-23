@@ -318,7 +318,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         #print(e)
         raise
         return -1
-
+'''
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Telemetry controller API", default=None)
@@ -336,9 +336,9 @@ if __name__ == '__main__':
     args = parser.parse_args(sys.argv[1:]);
     
     main(args);
-
+'''
 #pp.pprint(getKeyList('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c'))
 #pp.pprint(getLatestValue('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',1,['I_1','I_2','I_3','V_1','V_2','V_3']))
 #print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
-#print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
+print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
 #exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV)

@@ -32,6 +32,9 @@ NONE = 'NONE'
 SUM = 'SUM'
 COUNT = 'COUNT'
 
+#keyList Mode
+ALL = "ALL"
+
 # Main Function
 def main(args):
     try:
@@ -45,8 +48,9 @@ def main(args):
         Limit = args.limit
         Agg = args.agg
         Format = args.format
-        keyList = ast.literal_eval(str(args.keyList))
+        keyList = args.keyList.split(',')
     except:
+        #raise
         pass
     
     if(mode == "getToken"):
@@ -90,7 +94,7 @@ def getKeyList(entity_type, entity_id, isTelemetry=True):
     return KeyList
 
 # Function to Get Latest Variable Value in Device
-def getLatestValue(entity_type, entity_id, isTelemetry=True):
+def getLatestValue(entity_type, entity_id, isTelemetry=True,keyList=ALL):
     # Args:
     # - entity_type   : DEVICE, ASSET, OR ETC
     # - entity_id     : ID of the entity
@@ -99,11 +103,27 @@ def getLatestValue(entity_type, entity_id, isTelemetry=True):
 
     JWT_Token = getToken()
     if isTelemetry:
-        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/timeseries' %(entity_type,entity_id)
+        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/timeseries?keys=' %(entity_type,entity_id)
     else:
-        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/attributes' %(entity_type,entity_id)
+        url = 'http://35.202.49.101:8080/api/plugins/telemetry/%s/%s/values/attributes?keys=' %(entity_type,entity_id)
+
+    if keyList==ALL :
+        keys=getKeyList(entity_type, entity_id, isTelemetry)
+    else:
+        keys=keyList
+        
+    for i,key in enumerate(keys):
+        if i != len(keys)-1:
+            url += key + ','
+        else:
+            url += key + '&'
+
     headers = {'Accept':'application/json', 'X-Authorization': "Bearer "+JWT_Token}
     LatestValue = requests.get(url, headers=headers, json=None).json()
+
+    #Remove timestamp and extract values
+    for key in keys:
+        LatestValue[key]=ast.literal_eval(LatestValue[key][0]['value'])
     
     return LatestValue
 
@@ -123,19 +143,19 @@ def LogQuery(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, isT
                 url += key + '&'
 
         url += 'startTs=%d&endTs=%d&interval=%d&' %(startTs, endTs, Interval)
-
+        
         if limit != None:
             url += 'limit=%d&' %limit
         url += 'agg=%s' %Agg
-
+        
         headers = {'Accept':'application/json', 'X-Authorization': "Bearer "+JWT_Token}
         Log_JSON = requests.get(url, headers=headers, json=None).json()
         #print(Log_JSON)
-
-        if len(Log_JSON)!= 0:
+        
+        if len(Log_JSON)!=0:
             var = list(Log_JSON.keys())
             val = list(Log_JSON.values())
-
+                
             #Separate Timestamp and Variable Value
             tsList= []
             valList= []
@@ -145,27 +165,46 @@ def LogQuery(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, isT
                 val[i] = list(map(list, zip(*val[i])))
                 tsList.append(val[i][0])
                 valList.append(val[i][1])
-            
-            # Check if there is any difference in Timestamp lists
+
+            #Check missing variables
+            missVars = list(set(keyList)-set(var))
+            missVarsIndex = [keyList.index(x) for x in missVars]
+
+            if len(missVars) != 0:
+                print("Missing Vars:", missVars )
+                print("Missing Vars index:", missVarsIndex )
+
+            for index in missVarsIndex:
+                try:
+                    tsList.insert(index,tsList[index-1])
+                    valList.insert(index,['None']*len(tsList[index-1]))
+                except:
+                    tsList.insert(index,tsList[index])
+                    valList.insert(index,['None']*len(tsList[index]))
+                    
+            _tsList = []
+            #Combine all timestamp of each variable
             for i,item in enumerate(tsList):
                 if i == 0:
-                    _tsList = item
+                    _tsList += item
                 else:
-                    diffItems = list(set(tsList[i])-set(tsList[i-1]))
-                    if len(diffItems) != 0:
-                        print("ada perbedaan ts")
-                        for diffItem in diffItems:
-                            index = tsList[i].index(diffItem)
-                            for j in _tsList:
-                                _tsList[j].insert(index,diffItem)
+                    newTs = list(set(tsList[i])-set(_tsList))
+                    _tsList +=newTs
 
-            # Convert Timestamp (in UNIX ms) to string of Year-Month-Date Hour-Min-Secs Format
-            #for i,item in enumerate(_tsList):
-                #_tsList[i] = datetime.fromtimestamp(item/1000).strftime("%Y-%m-%d %H:%M:%S")
-                
+            #Sort timestamp
+            _tsList.sort()
+            
+            #Fill blank value in specific timestamp with None
+            _valList = [None]*len(keyList)
+            for i in range(0,len(keyList)):
+                _valList[i]=['None']*len(_tsList)
+                for j,item in enumerate(tsList[i]):
+                    index = _tsList.index(item)
+                    _valList[i][index]=valList[i][j]
+            
             # Transpose Value Matrice
-            Records = list(map(list, zip(*valList)))
-
+            Records = list(map(list, zip(*_valList)))
+            
             #Ubah tipe data
             for row in Records:
                 for i,item in enumerate(row):
@@ -175,19 +214,18 @@ def LogQuery(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, isT
                     except:
                         pass
         else:
-            tsList = []
-            Records = []
-            
-        return [tsList,Records]
+            _tsList=[]
+            Records=[]
+        return [_tsList,Records]
     except Exception as e:
         #raise
-        #print(e)
+        print(e)
         return -1
 
-def LogCollecter(rowPart,colPart,ts,rec,*argv):
+def LogCollecter(threadNo,ts,rec,*argv):
     Result = LogQuery(*argv)
-    ts[rowPart][colPart]=Result[0]
-    rec[rowPart][colPart]=Result[1]
+    ts[threadNo]=Result[0]
+    rec[threadNo]=Result[1]
     
 # Function to Get Historical Value of Variables in Device in .csv or .xlsx format 
 def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, isTelemetry=True, limit=500, Agg=NONE, Format=XLSX):
@@ -212,87 +250,71 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         totalKey = len(keyList)
         keys = []
         
-        totalColPartition = math.ceil(totalKey/5)
-        
-        for i in range(0,totalColPartition):
+        totalThread = math.ceil(totalKey/5)
+        threads = [None]*totalThread
+
+        _ts = [None]*totalThread
+        _rec = [None]*totalThread
+                    
+        for i in range(0,totalThread):
             try:
                 keys.append(keyList[i*5:(i*5)+5])
             except:
                 keys.append(keyList[i*5:])
-        print(keys)
-        
-        #Record Partition (Row)
-        totalRowPartition = math.ceil((endTs-startTs)/604800000)
-        tsRange = list(range(startTs,endTs,604800000))+[endTs]
-        threads = [[None]*totalColPartition]*totalRowPartition
-
-        _ts = [[None]*totalColPartition]*totalRowPartition
-        _rec = [[None]*totalColPartition]*totalRowPartition
-                    
-        for i in range(0,totalRowPartition):
-            for j in range(0,totalColPartition):
-                t = threading.Thread(target=LogCollecter, args=[i, j, _ts, _rec, entity_type, entity_id, keys[j], tsRange[i], tsRange[i+1], Interval, isTelemetry, limit, Agg])
-                t.setDaemon(True)
-                t.start()
-                threads[i][j]=t
+            
+            t = threading.Thread(target=LogCollecter, args=[i, _ts, _rec, entity_type, entity_id, keys[i], startTs, endTs, Interval, isTelemetry, limit, Agg])
+            t.setDaemon(True)
+            t.start()
+            threads[i]=t
+        #print(keys)
         
         # Join all the threads
-        for i in range(0,totalRowPartition):
-            for j in range(0,totalColPartition):
-                threads[i][j].join()
+        for i in range(0,totalThread):
+            threads[i].join()
 
         t1 = time.time()
         print("query duration:", t1-t0, "s")
 
-        _rec_ = []
-        for item in _rec:
-            _rec_.extend(item)
-            
-        # Check if there is any difference in Timestamp lists
-        print(len(_ts), len(_ts[0]), len(_ts[1]), len(_ts[2]), len(_ts[3]))
-        print()
-        pp.pprint(_ts)
-        #print(len(_ts_), len(_ts_[0]), len(_ts_[1]), len(_ts_[2]))
-
-        _ts_ = []
-        for i,subts in enumerate(_ts):
-            _ts_.append([])
-            for j,item in enumerate(subts):
-                if j == 0:
-                    _ts_[i]=item
-                else:
-                    diffItems = list(set(subts[j])-set(subts[j-1]))
-                    if len(diffItems) != 0:
-                        print("ada perbedaan ts")
-                        #for 
-                        
+        ts = []
+        #Combine all timestamp of each variable
         for i,item in enumerate(_ts):
             if i == 0:
-                ts = item
+                ts += item
             else:
-                #print(set(_ts_[i])-set(_ts_[i-1]))
-                diffItems = list(set(_ts_[i])-set(_ts_[i-1]))
-                if len(diffItems) != 0:
-                    print("ada perbedaan ts")
-                    for diffItem in diffItems:
-                        index = _ts_[i].index(diffItem)
-                        for j in ts:
-                            ts[j].insert(index,diffItem)
+                newTs = list(set(_ts[i])-set(ts))
+                ts +=newTs
+
+        #Sort timestamp
+        ts.sort()
+
+        #Fill blank value in specific timestamp with None
+        rec_ = [None]*totalThread
+        for i in range(0,totalThread):
+            rec_[i] = [[None]*len(keys[i])]*len(ts)
+            for j,item in enumerate(_ts[i]):
+                index = ts.index(item)
+                rec_[i][index]=_rec[i][j]
+
+        #Combine records from all threads
+        rec = []
+        for i in range(0, len(ts)):
+            rec.append([])
+            for j in range(0, totalThread):
+                rec[i]+=rec_[j][i]
+            
         
-        for i in range(0, len(_rec_[0])):
-            for j in range(0, totalColPartition):
-                if j == 0:
-                    rec.append(_rec[j][i])
-                else:
-                    rec[i]+=_rec[j][i]
+        # Convert Timestamp (in UNIX ms) to string of Year-Month-Date Hour-Min-Secs Format
+        for i,item in enumerate(ts):
+            ts[i] = datetime.fromtimestamp(item/1000).strftime("%Y-%m-%d %H:%M:%S")
         
         # Add Timestamp to Records (This represents a row in Excel or CSV file)
         for i, item in enumerate(rec):
             rec[i].insert(0, ts[i])
-
+        
         t2 = time.time()
         print("Processing duration:", t2-t1, "s")
         print("Total duration:", t2-t0, "s")
+
         
         #Export Data Log into CSV or XLSX format
         Filename = "DataLog_" + datetime.fromtimestamp(startTs/1000).strftime("%Y-%m-%d") + "_sd_" + datetime.fromtimestamp(endTs/1000).strftime("%Y-%m-%d")
@@ -313,7 +335,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
             # grab the active worksheet
             ws = wb.active
 
-            column = ['Timestamp']+ list(Log_JSON.keys())
+            column = ['Timestamp']+ keyList
             ws.append(column)
             
             for i, item in enumerate(rec):
@@ -328,7 +350,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         #print(e)
         raise
         return -1
-'''
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, help="Telemetry controller API", default=None)
@@ -346,9 +368,22 @@ if __name__ == '__main__':
     args = parser.parse_args(sys.argv[1:]);
     
     main(args);
-'''
-#pp.pprint(getKeyList('DEVICE', '25db7820-e302-11e8-8cdd-71469a7af993'))
-#pp.pprint(getLatestValue('DEVICE', '25db7820-e302-11e8-8cdd-71469a7af993'))
-#print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
-print(exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','V_12','V_23','V_31','PF_avg','Freq','E_Active','E_Reactive'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
-#exportLog('DEVICE', 'f6bffe60-d1ba-11e8-87ee-4be867fcc47c',['I_1','I_2'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV)
+
+
+#pp.pprint(getKeyList('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c'))
+#pp.pprint(getLatestValue('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',1,['I_1','I_2','I_3','V_1','V_2','V_3']))
+#pp.pprint(getLatestValue('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',1,'ALL'))
+#print(exportLog('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive'],1541962875000, 1543518075000, 1200000, True, 500, AVG, CSV))
+#print(exportLog('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
+#print(exportLog('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2'],1541467800000, 1543541400000, 1200000, True, 500, AVG, CSV))
+#print(exportLog('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive'],1542903275000, 1542913275000, 1200000, True, 500, AVG, CSV))
+#pp.pprint(LogQuery('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','E_Reactive','var'],1542903275000, 1542913275000, 1200000, True, 500, AVG))
+#pp.pprint(LogQuery('DEVICE', '08021b20-d1bd-11e8-87ee-4be867fcc47c',['I_1','I_2','I_3','V_1','V_2','V_3','E_Active','ASES','E_Reactive'],1542903275000, 1542913275000, 1200000, True, 500, AVG))
+
+#pp.pprint(getKeyList('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974'))
+#pp.pprint(getLatestValue('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974',1,'ALL'))
+#pp.pprint(LogQuery('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974',['Var1','Var2','Var3','Var4','Var5','Var6','Var7','Var8','Var9','Var10'],1542947400000, 1542952800000, 60000, True, 10, AVG))
+#pp.pprint(exportLog('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974',['Var1','Var2','Var3','Var4','Var5','Var6','Var7','Var8','Var9','Var10'],1542947400000, 1542952800000, 60000, True, 10, AVG,CSV))
+#pp.pprint(exportLog('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974',['Var1','Var6','Var2','Var7','Var3','Var8','Var4','Var9','Var5','Var10'],1542947400000, 1542952800000, 60000, True, 10, AVG,CSV))
+#pp.pprint(exportLog('DEVICE', '038589f0-eed8-11e8-8a36-29cef63c4974',['Var1','Var6','Var2','Var7','Var3'],1542947400000, 1542952800000, 60000, True, 10, AVG,CSV))
+
