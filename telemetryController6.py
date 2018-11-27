@@ -66,6 +66,10 @@ def main(args):
     else:
         raise ValueError("Unimplemented mode")
 
+#Convert Timestamp unix to datetime
+def UNIXtoDatetime(unix_ts):
+    return datetime.fromtimestamp(unix_ts/1000).strftime("%Y-%m-%d %H:%M:%S")
+
 #Function to get Request ID
 def getRequestID():
     with open(FolderPath + "/requestID.txt", "r") as file:
@@ -279,6 +283,7 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         #Key Partition (Columns)
         totalKey = len(keyList)
         totalKeyPart = math.ceil(totalKey/5)
+        
         keys = []
         for i in range(0,totalKeyPart):
             try:
@@ -289,11 +294,17 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         #Timestamp Partition (Rows)
         ts_list = list(range(startTs,endTs,604800000))+[endTs]
         totalTsPart = math.ceil((endTs-startTs)/604800000)
-        
-        threads = [[None]*totalKeyPart]*totalTsPart
-        _ts = [[None]*totalKeyPart]*totalTsPart
-        _rec = [[None]*totalKeyPart]*totalTsPart
 
+        #Initialization
+        threads =[]
+        _ts = []
+        _rec = []
+        for i in range(0,totalTsPart):
+            threads.append([None]*totalKeyPart)
+            _ts.append([None]*totalKeyPart)
+            _rec.append([None]*totalKeyPart)
+
+        #Start threads
         for i in range(0,len(ts_list)-1):
             _startTs = ts_list[i]
             _endTs = ts_list[i+1]
@@ -302,15 +313,16 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
                 t.setDaemon(True)
                 t.start()
                 threads[i][j]=t
+                
         #print(keys)
         
         # Join all the threads
         for i in range(0,totalTsPart):
             for j in range(0,totalKeyPart):
                 threads[i][j].join()
-
+        
         t1 = time.time()
-        #print("query duration:", t1-t0, "s")
+        print("query duration:", t1-t0, "s")
 
         #Combine all timestamp of each variable in different time partition
         ts = []
@@ -324,13 +336,12 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
                     ts[i] +=newTs
             #Sort timestamp
             ts[i].sort()
-        #print(ts)
-        
+
         #Combine all timestamp of all time partition
         ts_gen = []
         for i in range(0,totalTsPart):
             if len(ts_gen) == 0:
-                ts_gen = ts[i]
+                ts_gen += ts[i]
             else:
                 newTs = list(set(ts[i])-set(ts_gen))
                 ts_gen += newTs
@@ -339,7 +350,10 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         ts_gen.sort()
 
         #Fill blank value in specific timestamp with None
-        rec_ = [[None]*totalKeyPart]*totalTsPart
+        rec_ = []
+        for i in range(0,totalTsPart):
+            rec_.append([None]*totalKeyPart)
+            
         for i in range(0,totalTsPart):
             for j in range(0,totalKeyPart):
                 rec_[i][j] = [[None]*len(keys[j])]*len(ts[i])
@@ -367,15 +381,15 @@ def exportLog(entity_type, entity_id, keyList, startTs, endTs, Interval = 60, is
         
         # Convert Timestamp (in UNIX ms) to string of Year-Month-Date Hour-Min-Secs Format
         for i,item in enumerate(ts_gen):
-            ts_gen[i] = datetime.fromtimestamp(item/1000).strftime("%Y-%m-%d %H:%M:%S")
+            ts_gen[i] = UNIXtoDatetime(item)
         
         # Add Timestamp to Records (This represents a row in Excel or CSV file)
         for i, item in enumerate(rec):
             rec[i].insert(0, ts_gen[i])
         
         t2 = time.time()
-        #print("Processing duration:", t2-t1, "s")
-        #print("Total duration:", t2-t0, "s")
+        print("Processing duration:", t2-t1, "s")
+        print("Total duration:", t2-t0, "s")
 
         
         #Export Data Log into CSV or XLSX format
